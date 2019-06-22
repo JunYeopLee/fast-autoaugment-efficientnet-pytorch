@@ -172,6 +172,10 @@ def train(**kwargs):
     best_acc = -1
 
     print('\n[+] Start training')
+    if torch.cuda.device_count() > 1:
+        print('\n[+] Use {} GPUs'.format(torch.cuda.device_count()))
+        model = nn.DataParallel(model)
+
     start_t = time.time()
     for step in range(args.start_step, args.max_step):
         batch = next(train_loader)
