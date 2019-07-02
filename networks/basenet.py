@@ -1,7 +1,7 @@
 import torch.nn as nn
 
 class BaseNet(nn.Module):
-    def __init__(self, backbone):
+    def __init__(self, backbone, args):
         super(BaseNet, self).__init__()
 
         # Separate layers

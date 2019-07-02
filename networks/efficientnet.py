@@ -109,8 +109,11 @@ class MBConv(nn.Module):
 class Net(nn.Module):
     """ EfficientNet """
 
-    def __init__(self, pi=0, activation="swish", num_classes=1000):
+    def __init__(self, args):
         super(Net, self).__init__()
+        pi = args.pi
+        activation = args.activation
+        num_classes = args.num_classes
 
         self.d = 1.2 ** pi
         self.w = 1.1 ** pi

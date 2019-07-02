@@ -2,3 +2,4 @@ future
 tb-nightly
 torchvision
 torch
+hyperopt

@@ -1,9 +1,11 @@
 import os
 import fire
 import time
+import json
 import random
 import importlib
 import collections
+import pickle as cp
 
 import torch
 import torchvision
@@ -12,22 +14,31 @@ import torch.backends.cudnn as cudnn
 import torchvision.transforms as transforms
 import torchvision.models as models
 import torch.nn.functional as F
-
-from networks import *
 from torch.utils.tensorboard import SummaryWriter
 from pprint import pprint
 
+from networks import *
+
 DATASET_PATH = './data/'
+current_epoch = 0
 
 
-def concat_image_feature(image, feature):
+def concat_image_features(image, features, max_features=3):
     _, h, w = image.shape
-    feature, _ = torch.max(feature, 0, keepdim=True)
-    feature = torch.cat([feature]*3, 0)
-    feature = feature.view(1, 3, feature.size(1), feature.size(2))
-    feature = F.upsample(feature, size=(h,w), mode="bilinear")
-    feature = feature.view(3, h, w)
-    image_feature = torch.cat((image, feature), 2)
+
+    max_features = min(features.size(0), max_features)
+    image_feature = image.clone()
+
+    for i in range(max_features):
+        feature = features[i:i+1]
+        _min, _max = torch.min(feature), torch.max(feature)
+        feature = (feature - _min) / (_max - _min + 1e-6)
+        feature = torch.cat([feature]*3, 0)
+        feature = feature.view(1, 3, feature.size(1), feature.size(2))
+        feature = F.upsample(feature, size=(h,w), mode="bilinear")
+        feature = feature.view(3, h, w)
+        image_feature = torch.cat((image_feature, feature), 2)
+
     return image_feature
 
 
@@ -41,46 +52,53 @@ def get_model_name(args):
 
 def dict_to_namedtuple(d):
     Args = collections.namedtuple('Args', sorted(d.keys()))
+
     for k,v in d.items():
         if type(v) is dict:
             d[k] = dict_to_namedtuple(v)
+
         elif type(v) is str:
             try:
                 d[k] = eval(v)
             except:
                 d[k] = v
+
     args = Args(**d)
     return args
 
 
 def parse_args(kwargs):
     # combine with default args
-    kwargs['network'] =  kwargs['network'] if 'network' in kwargs else 'resnet18'
-    kwargs['optimizer'] = kwargs['optimizer'] if 'optimizer' in kwargs else 'rms'
-    kwargs['learning_rate'] = kwargs['learning_rate'] if 'learning_rate' in kwargs else 0.256
+    kwargs['dataset'] =  kwargs['dataset'] if 'dataset' in kwargs else 'cifar10'
+    kwargs['network'] =  kwargs['network'] if 'network' in kwargs else 'resnet_cifar10'
+    kwargs['optimizer'] = kwargs['optimizer'] if 'optimizer' in kwargs else 'adam'
+    kwargs['learning_rate'] = kwargs['learning_rate'] if 'learning_rate' in kwargs else 0.1
     kwargs['seed'] =  kwargs['seed'] if 'seed' in kwargs else None
     kwargs['use_cuda'] =  kwargs['use_cuda'] if 'use_cuda' in kwargs else True
     kwargs['use_cuda'] =  kwargs['use_cuda'] and torch.cuda.is_available()
     kwargs['num_workers'] = kwargs['num_workers'] if 'num_workers' in kwargs else 4
-    kwargs['print_step'] = kwargs['print_step'] if 'print_step' in kwargs else 1000
-    kwargs['val_step'] = kwargs['val_step'] if 'val_step' in kwargs else 5000
-    kwargs['scheduler'] = kwargs['scheduler'] if 'scheduler' in kwargs else 'clr'
-    kwargs['batch_size'] = kwargs['batch_size'] if 'batch_size' in kwargs else 256
+    kwargs['print_step'] = kwargs['print_step'] if 'print_step' in kwargs else 2000
+    kwargs['val_step'] = kwargs['val_step'] if 'val_step' in kwargs else 2000
+    kwargs['scheduler'] = kwargs['scheduler'] if 'scheduler' in kwargs else 'exp'
+    kwargs['batch_size'] = kwargs['batch_size'] if 'batch_size' in kwargs else 128
     kwargs['start_step'] = kwargs['start_step'] if 'start_step' in kwargs else 0
-    kwargs['max_step'] = kwargs['max_step'] if 'max_step' in kwargs else 500000
+    kwargs['max_step'] = kwargs['max_step'] if 'max_step' in kwargs else 64000
+    kwargs['fast_auto_augment'] = kwargs['fast_auto_augment'] if 'fast_auto_augment' in kwargs else False
 
     # to named tuple
     args = dict_to_namedtuple(kwargs)
-    return args
+    return args, kwargs
 
 
 def select_model(args):
     if args.network in models.__dict__:
         backbone = models.__dict__[args.network]()
-        model = BaseNet(backbone)
+        model = BaseNet(backbone, args)
     else:
         Net = getattr(importlib.import_module('networks.{}'.format(args.network)), 'Net')
-        model = Net()
+        model = Net(args)
+
+    print(model)
     return model
 
 
@@ -103,39 +121,96 @@ def select_scheduler(args, optimizer):
     elif args.scheduler =='clr':
         return torch.optim.lr_scheduler.CyclicLR(optimizer, 0.01, 0.015, mode='triangular2', step_size_up=250000, cycle_momentum=False)
     elif args.scheduler =='exp':
-        return torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.999997, last_epoch=-1)
+        return torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.9999283, last_epoch=-1)
     else:
         raise Exception('Unknown Scheduler')
 
 
-def get_dataloader(args, transform, split='train'):
+def get_dataset(args, transform, split='train'):
     assert split in ['train', 'val']
-    imagenet_data = torchvision.datasets.ImageNet(DATASET_PATH,
-                                                  split=split,
-                                                  transform=transform,
-                                                  download=(split is 'val'))
-    data_loader = torch.utils.data.DataLoader(imagenet_data,
+
+    if args.dataset == 'cifar10':
+        dataset = torchvision.datasets.CIFAR10(DATASET_PATH,
+                                               train=(split is 'train'),
+                                               transform=transform,
+                                               download=True)
+    elif args.dataset == 'imagenet':
+        dataset = torchvision.datasets.ImageNet(DATASET_PATH,
+                                                split=split,
+                                                transform=transform,
+                                                download=(split is 'val'))
+    else:
+        raise Exception('Unknown dataset')
+
+    return dataset
+
+
+def get_dataloader(args, dataset, shuffle=False, pin_memory=True):
+    data_loader = torch.utils.data.DataLoader(dataset,
                                               batch_size=args.batch_size,
-                                              shuffle=(split is 'train'),
+                                              shuffle=shuffle,
                                               num_workers=args.num_workers,
-                                              pin_memory=True)
+                                              pin_memory=pin_memory)
     return data_loader
 
 
-def get_inf_dataloader(*args):
-    data_loader = iter(get_dataloader(*args))
+def get_inf_dataloader(args, dataset):
+    global current_epoch
+    data_loader = iter(get_dataloader(args, dataset, shuffle=True))
+
     while True:
         try:
             batch = next(data_loader)
+
         except StopIteration:
-            data_loader = iter(get_dataloader(*args))
+            current_epoch += 1
+            data_loader = iter(get_dataloader(args, dataset, shuffle=True))
             batch = next(data_loader)
+
         yield batch
+
+
+def get_transform(args, model, log_dir=None):
+    if args.fast_auto_augment:
+        from fast_auto_augment import fast_auto_augment
+        transform, val_transform = fast_auto_augment(args, model, K=4, B=100, num_process=4)
+        if log_dir:
+            cp.dump(transform, open(os.path.join(log_dir, 'augmentation.cp'), 'wb'))
+
+    elif args.dataset == 'cifar10':
+        transform = transforms.Compose([
+            transforms.Pad(4),
+            transforms.RandomCrop(32),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor()
+        ])
+        val_transform = transforms.Compose([
+            transforms.Resize(32),
+            transforms.ToTensor()
+        ])
+
+    elif args.dataset == 'imagenet':
+        resize_h, resize_w = model.img_size[0], int(model.img_size[1]*1.875)
+        transform = transforms.Compose([
+            transforms.Resize([resize_h, resize_w]),
+            transforms.RandomCrop(model.img_size),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor()
+        ])
+        val_transform = transforms.Compose([
+            transforms.Resize([resize_h, resize_w]),
+            transforms.ToTensor()
+        ])
+
+    else:
+        raise Exception('Unknown Dataset')
+
+    return transform, val_transform
 
 
 def train(**kwargs):
     print('\n[+] Parse arguments')
-    args = parse_args(kwargs)
+    args, kwargs = parse_args(kwargs)
     pprint(args)
     device = torch.device('cuda' if args.use_cuda else 'cpu')
 
@@ -143,6 +218,7 @@ def train(**kwargs):
     model_name = get_model_name(args)
     log_dir = os.path.join('./runs', model_name)
     os.makedirs(os.path.join(log_dir, 'model'))
+    json.dump(kwargs, open(os.path.join(log_dir, 'kwargs.json'), 'w'))
     writer = SummaryWriter(log_dir=log_dir)
 
     if args.seed is not None:
@@ -161,14 +237,11 @@ def train(**kwargs):
     #writer.add_graph(model)
 
     print('\n[+] Load dataset')
-    resize_h, resize_w = model.img_size[0], int(model.img_size[1]*1.875)
-    transform = transforms.Compose([
-        transforms.Resize([resize_h, resize_w]),
-        transforms.RandomCrop(model.img_size),
-        transforms.RandomHorizontalFlip(),
-        transforms.ToTensor()
-    ])
-    train_loader = iter(get_inf_dataloader(args, transform, 'train'))
+    transform, val_transform = get_transform(args, model, log_dir)
+    train_dataset = get_dataset(args, transform, 'train')
+    valid_dataset = get_dataset(args, val_transform, 'val')
+    train_loader = iter(get_inf_dataloader(args, train_dataset))
+    max_epoch = len(train_dataset) // args.batch_size
     best_acc = -1
 
     print('\n[+] Start training')
@@ -179,11 +252,12 @@ def train(**kwargs):
     start_t = time.time()
     for step in range(args.start_step, args.max_step):
         batch = next(train_loader)
-        _train_res = _train(model, optimizer, scheduler, criterion, batch, step, writer, args)
+        _train_res = _train(args, model, optimizer, scheduler, criterion, batch, step, writer)
 
         if step % args.print_step == 0:
-            print('\n[+] Training step: {}/{} \t Elapsed time: {:.2f}min \t Learning rate: {}'.format(
-                step, args.max_step, (time.time()-start_t)/60, optimizer.param_groups[0]['lr']))
+            print('\n[+] Training step: {}/{}\tTraining epoch: {}/{}\tElapsed time: {:.2f}min\tLearning rate: {}'.format(
+                step, args.max_step, current_epoch, max_epoch, (time.time()-start_t)/60, optimizer.param_groups[0]['lr']))
+            writer.add_scalar('train/learning_rate', optimizer.param_groups[0]['lr'], global_step=step)
             writer.add_scalar('train/acc1', _train_res[0], global_step=step)
             writer.add_scalar('train/acc5', _train_res[1], global_step=step)
             writer.add_scalar('train/loss', _train_res[2], global_step=step)
@@ -192,8 +266,8 @@ def train(**kwargs):
             print('  Loss : {}'.format(_train_res[2].data))
 
         if step % args.val_step == args.val_step-1:
-            valid_loader = iter(get_dataloader(args, transform, 'val'))
-            _valid_res = _validate(model, criterion, valid_loader, args)
+            valid_loader = iter(get_dataloader(args, valid_dataset))
+            _valid_res = _validate(args, model, criterion, valid_loader, step, writer)
             print('\n[+] Valid results')
             writer.add_scalar('valid/acc1', _valid_res[0], global_step=step)
             writer.add_scalar('valid/acc5', _valid_res[1], global_step=step)
@@ -210,11 +284,15 @@ def train(**kwargs):
     writer.close()
 
 
-def _train(model, optimizer, scheduler, criterion, batch, step, writer, args):
+def _train(args, model, optimizer, scheduler, criterion, batch, step, writer, device=None):
     model.train()
     images, target = batch
 
-    if args.use_cuda:
+    if device:
+        images = images.to(device)
+        target = target.to(device)
+
+    elif args.use_cuda:
         images = images.cuda(non_blocking=True)
         target = target.cuda(non_blocking=True)
 
@@ -233,15 +311,14 @@ def _train(model, optimizer, scheduler, criterion, batch, step, writer, args):
     optimizer.step()
     if scheduler: scheduler.step()
 
-#    if step % args.print_step == 0:
-#        writer.add_image('train/input_image', concat_image_feature(images[0], first[0]))
-#        writer.add_image('train/input_image', concat_image_feature(images[1], first[1]))
-#        writer.add_image('train/input_image', concat_image_feature(images[2], first[2]))
+    if writer and step % args.print_step == 0:
+        for j in range(10):
+            writer.add_image('train/input_image', concat_image_features(images[j], first[j]), global_step=step)
 
     return acc1, acc5, loss
 
 
-def _validate(model, criterion, valid_loader, args):
+def _validate(args, model, criterion, valid_loader, step, writer, device=None):
     # switch to evaluate mode
     model.eval()
 
@@ -249,7 +326,12 @@ def _validate(model, criterion, valid_loader, args):
     samples = 0
     with torch.no_grad():
         for i, (images, target) in enumerate(valid_loader):
-            if args.use_cuda is not None:
+
+            if device:
+                images = images.to(device)
+                target = target.to(device)
+
+            elif args.use_cuda is not None:
                 images = images.cuda(non_blocking=True)
                 target = target.cuda(non_blocking=True)
 
@@ -265,6 +347,11 @@ def _validate(model, criterion, valid_loader, args):
 
     acc1 /= samples
     acc5 /= samples
+
+    if writer:
+        writer.add_image('valid/input_image', concat_image_features(images[0], first[0]), global_step=step)
+        writer.add_image('valid/input_image', concat_image_features(images[1], first[1]), global_step=step)
+        writer.add_image('valid/input_image', concat_image_features(images[2], first[2]), global_step=step)
 
     return acc1, acc5, loss
 
