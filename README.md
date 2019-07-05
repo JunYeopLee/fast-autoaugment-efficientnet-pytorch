@@ -20,7 +20,7 @@ python train.py --seed=24 --scale=3 --optimizer=sgd --fast_auto_augment=False
 # ResNet20 (w/ FastAutoAugment)
 python train.py --seed=24 --scale=3 --optimizer=sgd --fast_auto_augment=True
 
-# ResNet20 (w/ FastAutoAugment, Pre-searched policy)
+# ResNet20 (w/ FastAutoAugment, Pre-found policy)
 python train.py --seed=24 --scale=3 --optimizer=sgd --fast_auto_augment=True \
                 --augment_path=runs/ResNet_Scale3_FastAutoAugment/augmentation.cp
 
@@ -75,7 +75,8 @@ python eval.py --model_path=runs/ResNet_Scale3_Basline
 | ResNet20       | 91.54 | 91.47       |   -      |
 | ResNet20 + FAA |**92.76**| **91.99** |   -      |
 
-### Searched Policy
+### Found Policy
 <img src="policy.png">
 
 ### Augmented images
+<img src="augmented_images.png">
