@@ -1,5 +1,5 @@
 # Fast Autoaugment
-<img src="figures/faa.png">
+<img src="figures/faa.png" width=800px>
 
 ## Usage
 ### Training
@@ -45,10 +45,10 @@ python eval.py --model_path=runs/ResNet_Scale3_Basline
 ## Experiments
 ### Fast AutoAugment
 #### ResNet20 (CIFAR10)
-<img src="figures/res20_valid.png">
+<img src="figures/resnet20_valid.png">
 
 #### ResNet34 (CIFAR10)
-<img src="figures/res34_valid.png">
+<img src="figures/resnet34_valid.png">
 
 ### Augmented images
 
