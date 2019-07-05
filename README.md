@@ -83,4 +83,4 @@ python eval.py --model_path=runs/ResNet_Scale3_Basline --five_crops=True
 <img src="policy.png">
 
 ### Augmented images
-<img src="augmented_images.png">
+<img src="figures/augmented_images.png">
