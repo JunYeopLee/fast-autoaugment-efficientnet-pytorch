@@ -10,8 +10,8 @@ from sklearn.model_selection import StratifiedShuffleSplit
 from concurrent.futures import ProcessPoolExecutor
 
 from transforms import *
-from main import _train, _validate, select_optimizer, select_scheduler, get_dataloader, get_inf_dataloader, get_dataset, parse_args
 from hyperopt import fmin, tpe, hp, STATUS_OK, Trials
+from utils import *
 
 
 DEFALUT_CANDIDATES = [
@@ -30,23 +30,6 @@ DEFALUT_CANDIDATES = [
     Cutout,
 #     SamplePairing,
 ]
-
-
-def split_dataset(args, dataset, k):
-    # load dataset
-    X = list(range(len(dataset)))
-    Y = dataset.targets
-
-    # split to k-fold
-    assert len(X) == len(Y)
-
-    def _it_to_list(_it):
-        return list(zip(*list(_it)))
-
-    sss = StratifiedShuffleSplit(n_splits=k, random_state=args.seed, test_size=0.1)
-    Dm_indexes, Da_indexes = _it_to_list(sss.split(X, Y))
-
-    return Dm_indexes, Da_indexes
 
 
 def train_child(args, model, dataset, subset_indx, device=None):
@@ -75,7 +58,7 @@ def train_child(args, model, dataset, subset_indx, device=None):
     start_t = time.time()
     for step in range(args.start_step, args.max_step):
         batch = next(data_loader)
-        _train_res = _train(args, model, optimizer, scheduler, criterion, batch, step, None, device)
+        _train_res = train_step(args, model, optimizer, scheduler, criterion, batch, step, None, device)
 
         if step % args.print_step == 0:
             print('\n[+] Training step: {}/{}\tElapsed time: {:.2f}min\tLearning rate: {}\tDevice: {}'.format(
@@ -103,7 +86,7 @@ def validate_child(args, model, dataset, subset_indx, transform, device=None):
     subset = Subset(dataset, subset_indx)
     data_loader = get_dataloader(args, subset, pin_memory=False)
 
-    return _validate(args, model, criterion, data_loader, 0, None, device)
+    return validate(args, model, criterion, data_loader, 0, None, device)
 
 
 def get_next_subpolicy(transform_candidates, op_per_subpolicy=2):
@@ -160,10 +143,6 @@ def search_subpolicies_hyperopt(args, transform_candidates, child_model, dataset
                 max_evals=B,
                 trials=trials)
 
-#    from pprint import pprint
-#    pprint(best)
-#    pprint(trials.trials)
-
     subpolicies = []
     for t in trials.trials:
         vals = t['misc']['vals']
@@ -212,12 +191,11 @@ def process_fn(args_str, model, dataset, Dm_indx, Da_indx, T, transform_candidat
 
 def fast_auto_augment(args, model, transform_candidates=None, K=5, B=100, T=2, N=10, num_process=5):
     args_str = json.dumps(args._asdict())
-    dataset = get_dataset(args, None, 'train')
+    dataset = get_dataset(args, None, 'trainval')
     num_process = min(torch.cuda.device_count(), num_process)
     transform, futures = [], []
 
-    if num_process > 1:
-        torch.multiprocessing.set_start_method('spawn', force=True)
+    torch.multiprocessing.set_start_method('spawn', force=True)
 
     if not transform_candidates:
         transform_candidates = DEFALUT_CANDIDATES
@@ -227,29 +205,13 @@ def fast_auto_augment(args, model, transform_candidates=None, K=5, B=100, T=2, N
 
     with ProcessPoolExecutor(max_workers=num_process) as executor:
         for k, (Dm_indx, Da_indx) in enumerate(zip(Dm_indexes, Da_indexes)):
-            future = executor.submit(process_fn, args_str, model, dataset, Dm_indx, Da_indx, T, transform_candidates, B, N, k)
+            future = executor.submit(process_fn,
+                    args_str, model, dataset, Dm_indx, Da_indx, T, transform_candidates, B, N, k)
             futures.append(future)
 
         for future in futures:
             transform.extend(future.result())
 
-#            print('[+] Child %d training strated' % k)
-#
-#            # train child model
-#            child_model = copy.deepcopy(model)
-#            train_res = train_child(args, child_model, dataset, Dm_indx)
-#
-#            # search sub policy
-#            for t in range(T):
-#                subpolicies = search_subpolicies(args, transform_candidates, child_model, dataset, Da_indx, B)
-#                subpolicies = get_topn_subpolicies(subpolicies, N)
-#                transform.extend([subpolicy[0] for subpolicy in subpolicies])
-
     transform = transforms.RandomChoice(transform)
-    val_transform = transforms.Compose([
-        transforms.Resize(32),
-        transforms.ToTensor()])
 
-    print(transform)
-
-    return transform, val_transform
+    return transform
