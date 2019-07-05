@@ -1,6 +1,15 @@
 # Fast Autoaugment
 <img src="figures/faa.png" width=800px>
 
+A Pytorch Implementation of [Fast AutoAugment](https://arxiv.org/pdf/1905.00397.pdf) and [EfficientNet](https://arxiv.org/abs/1905.11946).
+
+## Prerequisite
+* torch==1.1.0
+* torchvision==0.2.2
+* hyperopt==0.1.2
+* future==0.17.1
+* tb-nightly==1.15.0a20190622
+
 ## Usage
 ### Training
 #### CIFAR10
@@ -45,11 +54,19 @@ python eval.py --model_path=runs/ResNet_Scale3_Basline
 ## Experiments
 ### Fast AutoAugment
 #### ResNet20 (CIFAR10)
+* Validation Curve
 <img src="figures/resnet20_valid.png">
 
+* Evaluation
+
 #### ResNet34 (CIFAR10)
+* Validation Curve
 <img src="figures/resnet34_valid.png">
+
+* Evaluation
+
+### Searched Policy
 
 ### Augmented images
 
-### Searched policy
+
