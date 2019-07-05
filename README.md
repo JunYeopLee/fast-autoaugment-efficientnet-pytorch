@@ -47,8 +47,12 @@ python train.py --seed=24 --dataset=imagenet --pi=0 --optimizer=adam --fast_auto
 ```
 
 ### Eval
-``` 
+```bash
+# Single Image testing
 python eval.py --model_path=runs/ResNet_Scale3_Basline
+
+# 5-crops testing
+python eval.py --model_path=runs/ResNet_Scale3_Basline --five_crops=True
 ```
 
 ## Experiments
@@ -59,10 +63,10 @@ python eval.py --model_path=runs/ResNet_Scale3_Basline
 
 * Evaluation (Acc @1)
 
-|                | Valid | Test(Single) | Test(Five) |
-|----------------|-------|-------------|----------|
-| ResNet20       | 90.70 | **91.45**   |   -      |
-| ResNet20 + FAA |**92.46**| **91.45** |   -      |
+|                | Valid | Test(Single) |
+|----------------|-------|-------------|
+| ResNet20       | 90.70 | **91.45**   |
+| ResNet20 + FAA |**92.46**| **91.45** |
 
 #### ResNet34 (CIFAR10)
 * Validation Curve
@@ -70,10 +74,10 @@ python eval.py --model_path=runs/ResNet_Scale3_Basline
 
 * Evaluation (Acc @1)
 
-|                | Valid | Test(Single) | Test(Five) |
-|----------------|-------|-------------|----------|
-| ResNet20       | 91.54 | 91.47       |   -      |
-| ResNet20 + FAA |**92.76**| **91.99** |   -      |
+|                | Valid | Test(Single) |
+|----------------|-------|-------------|
+| ResNet20       | 91.54 | 91.47       |
+| ResNet20 + FAA |**92.76**| **91.99** |
 
 ### Found Policy
 <img src="policy.png">
