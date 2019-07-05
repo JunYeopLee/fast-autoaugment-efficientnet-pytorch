@@ -68,16 +68,43 @@ class DepthwiseConvBlock(nn.Module):
         return self.fw(x)
 
 
+class SEBlock(nn.Module):
+    """ Squeeze and Excitation Block """
+
+    def __init__(self, in_channel, se_ratio=16):
+        super().__init__()
+        self.global_avgpool = nn.AdaptiveAvgPool2d((1,1))
+        inter_channel = in_channel // se_ratio
+
+        self.reduce = nn.Sequential(
+                nn.Conv2d(in_channel, inter_channel,
+                          kernel_size=1, padding=0, stride=1),
+                nn.ReLU())
+
+        self.expand = nn.Sequential(
+                nn.Conv2d(inter_channel, in_channel,
+                          kernel_size=1, padding=0, stride=1),
+                nn.Sigmoid())
+
+
+    def forward(self, x):
+        s = self.global_avgpool(x)
+        s = self.reduce(s)
+        s = self.expand(s)
+        return x * s
+
+
 class MBConv(nn.Module):
     """ Inverted residual block """
 
     def __init__(self, in_channel, out_channel, kernel_size,
-                 stride=1, expand_ratio=1, activation="swish"):
+                 stride=1, expand_ratio=1, activation="swish", use_seblock=False):
         super().__init__()
         self.in_channel = in_channel
         self.out_channel = out_channel
         self.expand_ratio = expand_ratio
         self.stride = stride
+        self.use_seblock = use_seblock
 
         if expand_ratio != 1:
             self.expand = ConvBlock(in_channel, in_channel*expand_ratio, 1,
@@ -86,6 +113,9 @@ class MBConv(nn.Module):
         self.dw_conv = DepthwiseConvBlock(in_channel*expand_ratio, kernel_size,
                                           padding=(kernel_size-1)//2,
                                           stride=stride, activation=activation)
+
+        if use_seblock:
+            self.seblock = SEBlock(in_channel*expand_ratio)
 
         self.pw_conv = ConvBlock(in_channel*expand_ratio, out_channel, 1,
                                  activation=activation)
@@ -97,6 +127,10 @@ class MBConv(nn.Module):
             x = inputs
 
         x = self.dw_conv(x)
+
+        if self.use_seblock:
+            x = self.seblock(x)
+
         x = self.pw_conv(x)
 
         if self.in_channel == self.out_channel and \
@@ -113,12 +147,13 @@ class Net(nn.Module):
         super(Net, self).__init__()
         pi = args.pi
         activation = args.activation
-        num_classes = args.num_classes
+        num_classes = 10
 
         self.d = 1.2 ** pi
         self.w = 1.1 ** pi
         self.r = 1.15 ** pi
-        self.img_size = (round_fn(224, self.r), round_fn(224, self.r))
+        self.img_size = (round_fn(32, self.r), round_fn(32, self.r))
+        self.use_seblock = args.use_seblock
 
         self.stage1 = ConvBlock(3, round_fn(32, self.w),
                                 kernel_size=3, padding=1, stride=2, activation=activation)
@@ -154,7 +189,7 @@ class Net(nn.Module):
         self.stage9 = ConvBlock(round_fn(320, self.w), round_fn(1280, self.w),
                                 kernel_size=1, activation=activation)
 
-        self.fc = nn.Linear(round_fn(7*7*1280, self.w), num_classes)
+        self.fc = nn.Linear(round_fn(1280, self.w), num_classes)
 
     def make_layers(self, in_channel, out_channel, depth, kernel_size,
                     half_resolution=False, expand_ratio=1, activation="swish"):
@@ -163,7 +198,7 @@ class Net(nn.Module):
             stride = 2 if half_resolution and i==0 else 1
             blocks.append(
                     MBConv(in_channel, out_channel, kernel_size,
-                           stride=stride, expand_ratio=expand_ratio, activation=activation))
+                           stride=stride, expand_ratio=expand_ratio, activation=activation, use_seblock=self.use_seblock))
             in_channel = out_channel
 
         return nn.Sequential(*blocks)
@@ -172,8 +207,8 @@ class Net(nn.Module):
         assert x.size()[-2:] == self.img_size, \
                 'Image size must be %r, but %r given' % (self.img_size, x.size()[-2])
 
-        x = self.stage1(x)
-        x = self.stage2(x)
+        s = self.stage1(x)
+        x = self.stage2(s)
         x = self.stage3(x)
         x = self.stage4(x)
         x = self.stage5(x)
@@ -183,4 +218,4 @@ class Net(nn.Module):
         x = self.stage9(x)
         x = x.reshape(x.size(0), -1)
         x = self.fc(x)
-        return x, x
+        return x, s
