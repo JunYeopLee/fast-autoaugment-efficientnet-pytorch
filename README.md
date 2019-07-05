@@ -79,8 +79,8 @@ python eval.py --model_path=runs/ResNet_Scale3_Basline --five_crops=True
 | ResNet20       | 91.54 | 91.47       |
 | ResNet20 + FAA |**92.76**| **91.99** |
 
-### Found Policy
-<img src="policy.png">
+### Found Policy [[Download]()]
+<img src="figures/pm.png">
 
 ### Augmented images
 <img src="figures/augmented_images.png">
