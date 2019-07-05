@@ -58,6 +58,7 @@ python eval.py --model_path=runs/ResNet_Scale3_Basline --five_crops=True
 ## Experiments
 ### Fast AutoAugment
 #### ResNet20 (CIFAR10)
+* Pre-trained model [[Download](https://drive.google.com/file/d/12D8050yGGiKWGt8_R8QTlkoQ6wq_icBn/view?usp=sharing)]
 * Validation Curve
 <img src="figures/resnet20_valid.png">
 
@@ -79,7 +80,7 @@ python eval.py --model_path=runs/ResNet_Scale3_Basline --five_crops=True
 | ResNet20       | 91.54 | 91.47       |
 | ResNet20 + FAA |**92.76**| **91.99** |
 
-### Found Policy [[Download]()]
+### Found Policy [[Download](https://drive.google.com/file/d/1Ia_IxPY3-T7m8biyl3QpxV1s5EA5gRDF/view?usp=sharing)]
 <img src="figures/pm.png">
 
 ### Augmented images
